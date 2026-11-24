@@ -1,0 +1,24 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Certificate {
+  id               String   @id @default(uuid())
+  verificationCode String   @unique
+  recipientName    String
+  recipientEmail   String
+  activityTitle    String
+  activityType     String   // Ex: "COURSE", "EVENT", "LECTURE", "TRAINING"
+  issuerName       String   // Ex: "EduHub", "WTISC Quixadá"
+  workloadHours    Int?
+  issuedAt         DateTime @default(now())
+  metadata         Json?    // Campo extensível para dados específicos do consumidor
+
+  @@index([recipientEmail])
+  @@index([issuerName])
+  @@map("certificates")
+}
