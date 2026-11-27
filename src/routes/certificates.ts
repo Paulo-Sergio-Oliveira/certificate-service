@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { executeWithResilience } from '../resilience/db-policy';
 import { generateVerificationCode } from '../utils/code-generator';
+import { generateCertificatePdfBuffer } from '../utils/pdf-generator';
 
 const certificateResponseSchema = z.object({
   id: z.string().uuid(),
@@ -180,6 +181,66 @@ export async function certificateRoutes(app: FastifyInstance) {
         return reply.status(503).send({
           error: isCircuitOpen ? 'CIRCUIT_OPEN' : 'DATABASE_UNAVAILABLE',
           message: 'Serviço temporariamente indisponível para validação.',
+        });
+      }
+    }
+  );
+
+  // Rota que permite gerar e baixar certificado em PDF pelo código de verificação
+  server.get(
+    '/api/v1/certificates/:code/pdf',
+    {
+      schema: {
+        tags: ['Certificados'],
+        summary: 'Gera e retorna o certificado em formato PDF',
+        params: z.object({
+          code: z.string().min(4),
+        }),
+        response: {
+          404: errorResponseSchema,
+          503: errorResponseSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      const { code } = request.params;
+
+      try {
+        const certificate = await executeWithResilience(() =>
+          prisma.certificate.findUnique({
+            where: { verificationCode: code.toUpperCase() },
+          })
+        );
+
+        if (!certificate) {
+          return reply.status(404).send({
+            error: 'CERTIFICATE_NOT_FOUND',
+            message: `Nenhum certificado encontrado com o código ${code}.`,
+          });
+        }
+
+        const pdfBuffer = await generateCertificatePdfBuffer({
+          verificationCode: certificate.verificationCode,
+          recipientName: certificate.recipientName,
+          activityTitle: certificate.activityTitle,
+          activityType: certificate.activityType,
+          issuerName: certificate.issuerName,
+          workloadHours: certificate.workloadHours,
+          issuedAt: certificate.issuedAt,
+        });
+
+        return reply
+          .header('Content-Type', 'application/pdf')
+          .header(
+            'Content-Disposition',
+            `inline; filename="${certificate.verificationCode}.pdf"`
+          )
+          .send(pdfBuffer as any);
+      } catch (err) {
+        const isCircuitOpen = err instanceof BrokenCircuitError;
+        return reply.status(503).send({
+          error: isCircuitOpen ? 'CIRCUIT_OPEN' : 'DATABASE_UNAVAILABLE',
+          message: 'Serviço temporariamente indisponível para geração do PDF.',
         });
       }
     }
